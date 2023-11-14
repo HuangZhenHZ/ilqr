@@ -205,9 +205,14 @@ public:
     VectorU ku = SolveUsingLLT(*l, q.df_du) * -1.0;
     MatrixUX kux = SolveUsingLLT(*l, q.d2f_du_dx) * -1.0;
     return V {
-      .df_dx = q.df_dx + kux.transpose() * q.d2f_du_du * ku + kux.transpose() * q.df_du + q.d2f_du_dx * ku,
-      .d2f_dx_dx = q.d2f_dx_dx + kux.transpose() * q.d2f_du_du * kux +
-                   kux.transpose() * q.d2f_du_dx + q.d2f_du_dx.transpose() * kux,
+      .df_dx = q.df_dx +
+               kux.transpose() * q.d2f_du_du * ku +
+               kux.transpose() * q.df_du +
+               q.d2f_du_dx.transpose() * ku,
+      .d2f_dx_dx = q.d2f_dx_dx +
+                   kux.transpose() * q.d2f_du_du * kux +
+                   kux.transpose() * q.d2f_du_dx +
+                   q.d2f_du_dx.transpose() * kux,
     };
   }
   
