@@ -1,5 +1,49 @@
 #include <bits/stdc++.h>
 
+class Painter {
+public:
+  struct Segment {
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+  };
+  void AddSegment(double x1, double y1, double x2, double y2) {
+    segments_.emplace_back(Segment{x1, y1, x2, y2});
+  }
+  void WriteToHtmlFile(const std::string& file_name) {
+    std::ofstream html_file(file_name);
+    html_file << "<!DOCTYPE html>\n";
+    html_file << "<html>\n";
+    html_file << "<head>\n";
+    html_file << "<title>Page Title</title>\n";
+    html_file << "</head>\n";
+    html_file << "<body>\n";
+    html_file << "<canvas id=\"myCanvas\" width=\"" << width_ * scale_ << "\" height=\"" << height_ * scale_
+        << "\" style=\"border:1px solid #000000;\"></canvas>\n";
+    html_file << "</body>\n";
+    html_file << "<script>\n";
+    html_file << "var c = document.getElementById(\"myCanvas\");\n";
+    html_file << "var ctx = c.getContext(\"2d\");\n";
+    
+    for (const Segment& segment : segments_) {
+      html_file << "ctx.moveTo(" << segment.x1 * scale_ << ", " << (height_ - segment.y1) * scale_ << ");\n";
+      html_file << "ctx.lineTo(" << segment.x2 * scale_ << ", " << (height_ - segment.y2) * scale_ << ");\n";
+    }
+    html_file << "ctx.stroke();\n";
+    
+    html_file << "</script>\n";
+    html_file << "</html>\n";
+  }
+
+private:
+  double width_ = 100;
+  double height_ = 100;
+  double scale_ = 10.0;
+  std::vector<Segment> segments_;
+};
+
+constexpr double Sqr(double x) {
+  return x * x;
+}
+
 template <int N, int M>
 struct Matrix {
   double a[N][M];
@@ -78,6 +122,15 @@ struct Matrix {
       }
     }
     return b;
+  }
+  
+  Matrix& operator*= (const double t) {
+    for (int i = 0; i < N; ++i) {
+      for (int j = 0; j < M; ++j) {
+        a[i][j] *= t;
+      }
+    }
+    return *this;
   }
   
   std::optional<Matrix> ComputeLLT() const {
@@ -186,14 +239,27 @@ public:
 class MyTransitionCost : public TransitionCost<2,2> {
 public:
   ~MyTransitionCost() override = default;
-  double ComputeCostAndDerivatives(const VectorX &, const VectorU &u, Derivatives *derivatives) const override {
+  double ComputeCostAndDerivatives(const VectorX &x, const VectorU &u, Derivatives *derivatives) const override {
     double cost = (u.transpose() * u)[0][0];
+    double dx = x[0][0] - 60;
+    double dy = x[1][0] - 40;
+    constexpr double kWeight = 0.1;
+    cost += Sqr(Sqr(dx) + Sqr(dy)) * kWeight;
     if (derivatives) {
       *derivatives = Derivatives();
       derivatives->df_du[0][0] = u[0][0] * 2.0;
       derivatives->df_du[1][0] = u[1][0] * 2.0;
       derivatives->d2f_du_du[0][0] = 2.0;
       derivatives->d2f_du_du[1][1] = 2.0;
+      
+      derivatives->df_dx[0][0] = 4.0 * dx * dx * dx + 2.0 * dy * dy * dx;
+      derivatives->df_dx[1][0] = 4.0 * dy * dy * dy + 2.0 * dx * dx * dy;
+      derivatives->d2f_dx_dx[0][0] = 12.0 * dx * dx + 2.0 * dy * dy;
+      derivatives->d2f_dx_dx[1][1] = 12.0 * dy * dy + 2.0 * dx * dx;
+      derivatives->d2f_dx_dx[0][1] = 4.0 * dx * dy;
+      derivatives->d2f_dx_dx[1][0] = 4.0 * dx * dy;
+      derivatives->df_dx *= kWeight;
+      derivatives->d2f_dx_dx *= kWeight;      
     }
     return cost;
   }
@@ -265,12 +331,16 @@ public:
   }
   
   static Q ComputeQ(const V &v, const MatrixXX &fx, const MatrixXU &fu) {
+    MatrixUU quu = fu.transpose() * v.d2f_dx_dx * fu;
+    for (int i = 0; i < UDim; ++i) {
+      quu[i][i] += 0;
+    }
     return Q {
       .df_dx = fx.transpose() * v.df_dx,
       .df_du = fu.transpose() * v.df_dx,
       .d2f_dx_dx = fx.transpose() * v.d2f_dx_dx * fx,
       .d2f_du_dx = fu.transpose() * v.d2f_dx_dx * fx,
-      .d2f_du_du = fu.transpose() * v.d2f_dx_dx * fu,
+      .d2f_du_du = quu,
     };
   }
   
@@ -288,7 +358,7 @@ public:
     v_.resize(n + 1);
     ku_.resize(n);
     kux_.resize(n);
-    for (int iter = 0; iter < 5; ++iter) {
+    for (int iter = 0; iter < 100; ++iter) {
       final_cost_->ComputeCostAndDerivatives(x_[n], &v_[n]);
       for (int i = n - 1; i >= 0; --i) {
         std::pair<MatrixXX, MatrixXU> fx_and_fu = dynamic_model_->ComputeDerivatives(x_[i], u_[i]);
@@ -314,6 +384,7 @@ public:
         x_[i + 1] = dynamic_model_->ComputeNextState(x_[i], u_[i]);
       }
       
+      /*
       printf("iter = %d\n", iter);
       for (int i = 0; i < (int)x_.size(); ++i) {
         printf("x_[%d]\n", i);
@@ -329,6 +400,7 @@ public:
         printf("vxx %d\n", i);
         v_[i].d2f_dx_dx.print();
       }
+       */
     }
   }
 
@@ -435,15 +507,28 @@ int main() {
   solver.transition_cost_ = std::make_unique<MyTransitionCost>();
   solver.final_cost_ = std::make_unique<MyFinalCost>();
   solver.x_.push_back(Solver::VectorX());
-  solver.u_.push_back(Solver::VectorU());
-  solver.u_.push_back(Solver::VectorU());
+  for (int i = 0; i < 20; ++i) {
+    solver.u_.push_back(Solver::VectorU());
+  }
   solver.Solve();
   for (const auto& x : solver.x_) {
     x.print();
   }
+  /*
   for (const auto& u : solver.u_) {
     u.print();
   }
+   */
+  
+  Painter painter;
+  for (int i = 0; i + 1 < (int)solver.x_.size(); ++i) {
+    painter.AddSegment(
+        solver.x_[i][0][0],
+        solver.x_[i][1][0],
+        solver.x_[i + 1][0][0],
+        solver.x_[i + 1][1][0]);
+  }
+  painter.WriteToHtmlFile("output.html");  
   return 0;
 }
 
